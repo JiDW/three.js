@@ -32,39 +32,18 @@ const exceptionList = [
 	'webgl_loader_texture_lottie', // not sure why this fails
 	'webgl_loader_texture_pvrtc', // not supported in CI, useless
 	'webgl_morphtargets_face', // To investigate...
+	'webgl_nodes_materials_standard', // puppeteer does not support import maps yet
 	'webgl_postprocessing_crossfade', // fails for some misterious reason
 	'webgl_raymarching_reflect', // exception for Github Actions
+	'webgl_renderer_pathtracer', // slow to render
 	'webgl_test_memory2', // gives fatal error in puppeteer
 	'webgl_tiled_forward', // exception for Github Actions
 	'webgl_video_kinect', // video tag not deterministic enough
 	'webgl_video_panorama_equirectangular', // video tag not deterministic enough?
 	'webgl_worker_offscreencanvas', // in a worker, not robust
 	// webxr
-	'webxr_ar_lighting',
-	// webgpu
-	'webgpu_compute',
-	'webgpu_cubemap_adjustments',
-	'webgpu_cubemap_mix',
-	'webgpu_depth_texture',
-	'webgpu_instance_mesh',
-	'webgpu_instance_uniform',
-	'webgpu_lights_custom',
-	'webgpu_lights_selective',
-	'webgpu_loader_gltf',
-	'webgpu_materials',
-	'webgpu_nodes_playground',
-	'webgpu_particles',
-	'webgpu_rtt',
-	'webgpu_sandbox',
-	'webgpu_skinning_instancing',
-	'webgpu_skinning_points',
-	'webgpu_skinning',
-	'webgpu_sprites'
-].concat( ( process.platform === 'win32' ) ? [
-
-	'webgl_effects_ascii' // windows fonts not supported
-
-] : [] );
+	'webxr_ar_lighting'
+];
 
 console.green = ( msg ) => console.log( `\x1b[32m${ msg }\x1b[37m` );
 console.red = ( msg ) => console.log( `\x1b[31m${ msg }\x1b[37m` );
@@ -85,7 +64,13 @@ const pup = puppeteer.launch( {
 	args: [
 		'--use-gl=swiftshader',
 		'--no-sandbox',
-		'--enable-surface-synchronization'
+		'--enable-surface-synchronization',
+
+		'--enable-unsafe-webgpu',
+		'--enable-features=Vulkan',
+		'--use-angle=swiftshader',
+		'--use-vulkan=swiftshader',
+		'--use-webgpu-adapter=swiftshader'
 	]
 } ).then( async browser => {
 
@@ -304,17 +289,17 @@ const pup = puppeteer.launch( {
 				numFailedPixels /= actual.width * actual.height;
 
 				/* Print results */
-
+				const percFailedPixels = 100 * numFailedPixels;
 				if ( numFailedPixels < maxFailedPixels ) {
 
 					attemptId = maxAttemptId;
-					console.green( `diff: ${ numFailedPixels.toFixed( 3 ) }, file: ${ file }` );
+					console.green( `diff: ${ percFailedPixels.toFixed( 1 ) }%, file: ${ file }` );
 
 				} else {
 
 					if ( ++ attemptId === maxAttemptId ) {
 
-						console.red( `ERROR! Diff wrong in ${ numFailedPixels.toFixed( 3 ) } of pixels in file: ${ file }` );
+						console.red( `ERROR! Diff wrong in ${ percFailedPixels.toFixed( 1 ) }% of pixels in file: ${ file }` );
 						failedScreenshots.push( file );
 						continue;
 
