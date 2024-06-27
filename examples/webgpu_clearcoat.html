@@ -24,7 +24,6 @@
 
 			import * as THREE from 'three';
 
-			import WebGPU from 'three/addons/capabilities/WebGPU.js';
 			import WebGPURenderer from 'three/addons/renderers/webgpu/WebGPURenderer.js';
 
 			import Stats from 'three/addons/libs/stats.module.js';
@@ -42,17 +41,8 @@
 			let group;
 
 			init();
-			animate();
 
 			function init() {
-
-				if ( WebGPU.isAvailable() === false ) {
-
-					document.body.appendChild( WebGPU.getErrorMessage() );
-
-					throw new Error( 'No WebGPU support' );
-
-				}
 
 				container = document.createElement( 'div' );
 				document.body.appendChild( container );
@@ -187,6 +177,7 @@
 				renderer = new WebGPURenderer( { antialias: true } );
 				renderer.setPixelRatio( window.devicePixelRatio );
 				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.setAnimationLoop( animate );
 				container.appendChild( renderer.domElement );
 
 				//
@@ -226,8 +217,6 @@
 			//
 
 			function animate() {
-
-				requestAnimationFrame( animate );
 
 				render();
 

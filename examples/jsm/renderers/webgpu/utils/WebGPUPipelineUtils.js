@@ -23,7 +23,28 @@ class WebGPUPipelineUtils {
 
 	}
 
-	createRenderPipeline( renderObject ) {
+	_getSampleCount( renderObjectContext ) {
+
+		let sampleCount = this.backend.utils.getSampleCount( renderObjectContext );
+
+		if ( sampleCount > 1 ) {
+
+			// WebGPU only supports power-of-two sample counts and 2 is not a valid value
+			sampleCount = Math.pow( 2, Math.floor( Math.log2( sampleCount ) ) );
+
+			if ( sampleCount === 2 ) {
+
+				sampleCount = 4;
+
+			}
+
+		}
+
+		return sampleCount;
+
+	}
+
+	createRenderPipeline( renderObject, promises ) {
 
 		const { object, material, geometry, pipeline } = renderObject;
 		const { vertexProgram, fragmentProgram } = pipeline;
@@ -102,9 +123,11 @@ class WebGPUPipelineUtils {
 		const primitiveState = this._getPrimitiveState( object, geometry, material );
 		const depthCompare = this._getDepthCompare( material );
 		const depthStencilFormat = utils.getCurrentDepthStencilFormat( renderObject.context );
-		const sampleCount = utils.getSampleCount( renderObject.context );
 
-		pipelineData.pipeline = device.createRenderPipeline( {
+		const sampleCount = this._getSampleCount( renderObject.context );
+
+		const pipelineDescriptor = {
+			label: 'renderPipeline',
 			vertex: Object.assign( {}, vertexModule, { buffers: vertexBuffers } ),
 			fragment: Object.assign( {}, fragmentModule, { targets } ),
 			primitive: primitiveState,
@@ -124,7 +147,57 @@ class WebGPUPipelineUtils {
 			layout: device.createPipelineLayout( {
 				bindGroupLayouts: [ bindingsData.layout ]
 			} )
-		} );
+		};
+
+		if ( promises === null ) {
+
+			pipelineData.pipeline = device.createRenderPipeline( pipelineDescriptor );
+
+		} else {
+
+			const p = new Promise( ( resolve /*, reject*/ ) => {
+
+				device.createRenderPipelineAsync( pipelineDescriptor ).then( pipeline => {
+
+					pipelineData.pipeline = pipeline;
+					resolve();
+
+				} );
+
+			} );
+
+			promises.push( p );
+
+		}
+
+	}
+
+	createBundleEncoder( renderContext, renderObject ) {
+
+		const backend = this.backend;
+		const { utils, device } = backend;
+
+		const renderContextData = backend.get( renderContext );
+		const renderObjectData = backend.get( renderObject );
+
+		const depthStencilFormat = utils.getCurrentDepthStencilFormat( renderContext );
+		const colorFormat = utils.getCurrentColorFormat( renderContext );
+		const sampleCount = this._getSampleCount( renderObject.context );
+
+		const descriptor = {
+			label: 'renderBundleEncoder',
+			colorFormats: [ colorFormat ],
+			depthStencilFormat,
+			sampleCount
+		};
+
+		const bundleEncoder = device.createRenderBundleEncoder( descriptor );
+
+		renderObjectData.bundleEncoder = bundleEncoder;
+		renderContextData.currentSets = { attributes: {} };
+		renderContextData._renderBundleViewport = renderContext.width + '_' + renderContext.height;
+
+		return bundleEncoder;
 
 	}
 
@@ -152,17 +225,21 @@ class WebGPUPipelineUtils {
 		let color, alpha;
 
 		const blending = material.blending;
+		const blendSrc = material.blendSrc;
+		const blendDst = material.blendDst;
+		const blendEquation = material.blendEquation;
+
 
 		if ( blending === CustomBlending ) {
 
-			const blendSrcAlpha = material.blendSrcAlpha !== null ? material.blendSrcAlpha : GPUBlendFactor.One;
-			const blendDstAlpha = material.blendDstAlpha !== null ? material.blendDstAlpha : GPUBlendFactor.Zero;
-			const blendEquationAlpha = material.blendEquationAlpha !== null ? material.blendEquationAlpha : GPUBlendFactor.Add;
+			const blendSrcAlpha = material.blendSrcAlpha !== null ? material.blendSrcAlpha : blendSrc;
+			const blendDstAlpha = material.blendDstAlpha !== null ? material.blendDstAlpha : blendDst;
+			const blendEquationAlpha = material.blendEquationAlpha !== null ? material.blendEquationAlpha : blendEquation;
 
 			color = {
-				srcFactor: this._getBlendFactor( material.blendSrc ),
-				dstFactor: this._getBlendFactor( material.blendDst ),
-				operation: this._getBlendOperation( material.blendEquation )
+				srcFactor: this._getBlendFactor( blendSrc ),
+				dstFactor: this._getBlendFactor( blendDst ),
+				operation: this._getBlendOperation( blendEquation )
 			};
 
 			alpha = {
@@ -456,10 +533,9 @@ class WebGPUPipelineUtils {
 
 		descriptor.topology = utils.getPrimitiveTopology( object, material );
 
-		if ( object.isLine === true && object.isLineSegments !== true ) {
+		if ( geometry.index !== null && object.isLine === true && object.isLineSegments !== true ) {
 
-			const count = ( geometry.index ) ? geometry.index.count : geometry.attributes.position.count;
-			descriptor.stripIndexFormat = ( count > 65535 ) ? GPUIndexFormat.Uint32 : GPUIndexFormat.Uint16; // define data type for primitive restart value
+			descriptor.stripIndexFormat = ( geometry.index.array instanceof Uint16Array ) ? GPUIndexFormat.Uint16 : GPUIndexFormat.Uint32;
 
 		}
 

@@ -20,15 +20,67 @@ class Node extends EventDispatcher {
 
 		this.uuid = MathUtils.generateUUID();
 
+		this.version = 0;
+
+		this._cacheKey = null;
+		this._cacheKeyVersion = 0;
+
+		this.global = false;
+
 		this.isNode = true;
 
 		Object.defineProperty( this, 'id', { value: _nodeId ++ } );
 
 	}
 
+	set needsUpdate( value ) {
+
+		if ( value === true ) {
+
+			this.version ++;
+
+		}
+
+	}
+
 	get type() {
 
 		return this.constructor.type;
+
+	}
+
+	onUpdate( callback, updateType ) {
+
+		this.updateType = updateType;
+		this.update = callback.bind( this.getSelf() );
+
+		return this;
+
+	}
+
+	onFrameUpdate( callback ) {
+
+		return this.onUpdate( callback, NodeUpdateType.FRAME );
+
+	}
+
+	onRenderUpdate( callback ) {
+
+		return this.onUpdate( callback, NodeUpdateType.RENDER );
+
+	}
+
+	onObjectUpdate( callback ) {
+
+		return this.onUpdate( callback, NodeUpdateType.OBJECT );
+
+	}
+
+	onReference( callback ) {
+
+		this.updateReference = callback.bind( this.getSelf() );
+
+		return this;
 
 	}
 
@@ -40,7 +92,7 @@ class Node extends EventDispatcher {
 
 	}
 
-	updateReference() {
+	updateReference( /*state*/ ) {
 
 		return this;
 
@@ -48,13 +100,11 @@ class Node extends EventDispatcher {
 
 	isGlobal( /*builder*/ ) {
 
-		return false;
+		return this.global;
 
 	}
 
 	* getChildren() {
-
-		const self = this;
 
 		for ( const { childNode } of getNodeChildren( this ) ) {
 
@@ -82,9 +132,18 @@ class Node extends EventDispatcher {
 
 	}
 
-	getCacheKey() {
+	getCacheKey( force = false ) {
 
-		return getCacheKey( this );
+		force = force || this.version !== this._cacheKeyVersion;
+
+		if ( force === true || this._cacheKey === null ) {
+
+			this._cacheKey = getCacheKey( this, force );
+			this._cacheKeyVersion = this.version;
+
+		}
+
+		return this._cacheKey;
 
 	}
 
@@ -103,6 +162,15 @@ class Node extends EventDispatcher {
 	getUpdateBeforeType() {
 
 		return this.updateBeforeType;
+
+	}
+
+	getElementType( builder ) {
+
+		const type = this.getNodeType( builder );
+		const elementType = builder.getElementType( type );
+
+		return elementType;
 
 	}
 
@@ -133,9 +201,11 @@ class Node extends EventDispatcher {
 
 		const nodeProperties = builder.getNodeProperties( this );
 
+		let index = 0;
+
 		for ( const childNode of this.getChildren() ) {
 
-			nodeProperties[ '_node' + childNode.id ] = childNode;
+			nodeProperties[ 'node' + index ++ ] = childNode;
 
 		}
 
@@ -152,12 +222,20 @@ class Node extends EventDispatcher {
 
 	}
 
-	analyze( builder ) {
+	increaseUsage( builder ) {
 
 		const nodeData = builder.getDataFromNode( this );
-		nodeData.dependenciesCount = nodeData.dependenciesCount === undefined ? 1 : nodeData.dependenciesCount + 1;
+		nodeData.usageCount = nodeData.usageCount === undefined ? 1 : nodeData.usageCount + 1;
 
-		if ( nodeData.dependenciesCount === 1 ) {
+		return nodeData.usageCount;
+
+	}
+
+	analyze( builder ) {
+
+		const usageCount = this.increaseUsage( builder );
+
+		if ( usageCount === 1 ) {
 
 			// node flow children
 
@@ -224,6 +302,8 @@ class Node extends EventDispatcher {
 		const buildStage = builder.getBuildStage();
 
 		if ( buildStage === 'setup' ) {
+
+			this.updateReference( builder );
 
 			const properties = builder.getNodeProperties( this );
 
@@ -460,7 +540,12 @@ export default Node;
 export function addNodeClass( type, nodeClass ) {
 
 	if ( typeof nodeClass !== 'function' || ! type ) throw new Error( `Node class ${ type } is not a class` );
-	if ( NodeClasses.has( type ) ) throw new Error( `Redefinition of node class ${ type }` );
+	if ( NodeClasses.has( type ) ) {
+
+		console.warn( `Redefinition of node class ${ type }` );
+		return;
+
+	}
 
 	NodeClasses.set( type, nodeClass );
 	nodeClass.type = type;

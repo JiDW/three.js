@@ -16,8 +16,6 @@ class Bindings extends DataMap {
 
 		this.pipelines.bindings = this; // assign bindings to pipelines
 
-		this.updateMap = new WeakMap();
-
 	}
 
 	getForRender( renderObject ) {
@@ -50,7 +48,7 @@ class Bindings extends DataMap {
 
 			const nodeBuilderState = this.nodes.getForCompute( computeNode );
 
-			const bindings = nodeBuilderState.bindings.compute;
+			const bindings = nodeBuilderState.bindings;
 
 			data.bindings = bindings;
 
@@ -100,44 +98,80 @@ class Bindings extends DataMap {
 
 		const { backend } = this;
 
-		const updateMap = this.updateMap;
-		const frame = this.info.render.frame;
-
 		let needsBindingsUpdate = false;
 
 		// iterate over all bindings and check if buffer updates or a new binding group is required
 
 		for ( const binding of bindings ) {
 
-			const isUpdated = updateMap.get( binding ) === frame;
+			if ( binding.isNodeUniformsGroup ) {
 
-			if ( isUpdated ) continue;
+				const updated = this.nodes.updateGroup( binding );
+
+				if ( ! updated ) continue;
+
+			}
 
 			if ( binding.isUniformBuffer ) {
 
-				const needsUpdate = binding.update();
+				const updated = binding.update();
 
-				if ( needsUpdate ) {
+				if ( updated ) {
 
 					backend.updateBinding( binding );
 
 				}
 
+			} else if ( binding.isSampler ) {
+
+				binding.update();
+
 			} else if ( binding.isSampledTexture ) {
+
+				const texture = binding.texture;
 
 				if ( binding.needsBindingsUpdate ) needsBindingsUpdate = true;
 
-				const needsUpdate = binding.update();
+				const updated = binding.update();
 
-				if ( needsUpdate ) {
+				if ( updated ) {
 
 					this.textures.updateTexture( binding.texture );
 
 				}
 
-			}
+				const textureData = backend.get( binding.texture );
 
-			updateMap.set( binding, frame );
+				if ( backend.isWebGPUBackend === true && textureData.texture === undefined && textureData.externalTexture === undefined ) {
+
+					// TODO: Remove this once we found why updated === false isn't bound to a texture in the WebGPU backend
+					console.error( 'Bindings._update: binding should be available:', binding, updated, binding.texture, binding.textureNode.value );
+
+					this.textures.updateTexture( binding.texture );
+					needsBindingsUpdate = true;
+
+				}
+
+
+				if ( texture.isStorageTexture === true ) {
+
+					const textureData = this.get( texture );
+
+					if ( binding.store === true ) {
+
+						textureData.needsMipmap = true;
+
+					} else if ( texture.generateMipmaps === true && this.textures.needsMipmaps( texture ) && textureData.needsMipmap === true ) {
+
+						this.backend.generateMipmaps( texture );
+
+						textureData.needsMipmap = false;
+
+					}
+
+				}
+
+			}
 
 		}
 
@@ -148,14 +182,6 @@ class Bindings extends DataMap {
 			this.backend.updateBindings( bindings, pipeline );
 
 		}
-
-	}
-
-	dispose() {
-
-		super.dispose();
-
-		this.updateMap = new WeakMap();
 
 	}
 

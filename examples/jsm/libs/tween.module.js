@@ -7,13 +7,13 @@ var Easing = Object.freeze({
             return amount;
         },
         In: function (amount) {
-            return this.None(amount);
+            return amount;
         },
         Out: function (amount) {
-            return this.None(amount);
+            return amount;
         },
         InOut: function (amount) {
-            return this.None(amount);
+            return amount;
         },
     }),
     Quadratic: Object.freeze({
@@ -413,18 +413,21 @@ var Tween = /** @class */ (function () {
     Tween.prototype.isPaused = function () {
         return this._isPaused;
     };
+    Tween.prototype.getDuration = function () {
+        return this._duration;
+    };
     Tween.prototype.to = function (target, duration) {
         if (duration === void 0) { duration = 1000; }
         if (this._isPlaying)
             throw new Error('Can not call Tween.to() while Tween is already started or paused. Stop the Tween first.');
         this._valuesEnd = target;
         this._propertiesAreSetUp = false;
-        this._duration = duration;
+        this._duration = duration < 0 ? 0 : duration;
         return this;
     };
     Tween.prototype.duration = function (duration) {
         if (duration === void 0) { duration = 1000; }
-        this._duration = duration;
+        this._duration = duration < 0 ? 0 : duration;
         return this;
     };
     Tween.prototype.dynamic = function (dynamic) {
@@ -673,12 +676,11 @@ var Tween = /** @class */ (function () {
      * it is still playing, just paused).
      */
     Tween.prototype.update = function (time, autoStart) {
+        var _a;
         if (time === void 0) { time = now(); }
         if (autoStart === void 0) { autoStart = true; }
         if (this._isPaused)
             return true;
-        var property;
-        var elapsed;
         var endTime = this._startTime + this._duration;
         if (!this._goToEnd && !this._isPlaying) {
             if (time > endTime)
@@ -702,61 +704,88 @@ var Tween = /** @class */ (function () {
             }
             this._onEveryStartCallbackFired = true;
         }
-        elapsed = (time - this._startTime) / this._duration;
-        elapsed = this._duration === 0 || elapsed > 1 ? 1 : elapsed;
+        var elapsedTime = time - this._startTime;
+        var durationAndDelay = this._duration + ((_a = this._repeatDelayTime) !== null && _a !== void 0 ? _a : this._delayTime);
+        var totalTime = this._duration + this._repeat * durationAndDelay;
+        var elapsed = this._calculateElapsedPortion(elapsedTime, durationAndDelay, totalTime);
         var value = this._easingFunction(elapsed);
-        // properties transformations
+        var status = this._calculateCompletionStatus(elapsedTime, durationAndDelay);
+        if (status === 'repeat') {
+            // the current update is happening after the instant the tween repeated
+            this._processRepetition(elapsedTime, durationAndDelay);
+        }
         this._updateProperties(this._object, this._valuesStart, this._valuesEnd, value);
+        if (status === 'about-to-repeat') {
+            // the current update is happening at the exact instant the tween is going to repeat
+            // the values should match the end of the tween, not the beginning,
+            // that's why _processRepetition happens after _updateProperties
+            this._processRepetition(elapsedTime, durationAndDelay);
+        }
         if (this._onUpdateCallback) {
             this._onUpdateCallback(this._object, elapsed);
         }
-        if (elapsed === 1) {
-            if (this._repeat > 0) {
-                if (isFinite(this._repeat)) {
-                    this._repeat--;
-                }
-                // Reassign starting values, restart by making startTime = now
-                for (property in this._valuesStartRepeat) {
-                    if (!this._yoyo && typeof this._valuesEnd[property] === 'string') {
-                        this._valuesStartRepeat[property] =
-                            // eslint-disable-next-line
-                            // @ts-ignore FIXME?
-                            this._valuesStartRepeat[property] + parseFloat(this._valuesEnd[property]);
-                    }
-                    if (this._yoyo) {
-                        this._swapEndStartRepeatValues(property);
-                    }
-                    this._valuesStart[property] = this._valuesStartRepeat[property];
-                }
-                if (this._yoyo) {
-                    this._reversed = !this._reversed;
-                }
-                if (this._repeatDelayTime !== undefined) {
-                    this._startTime = time + this._repeatDelayTime;
-                }
-                else {
-                    this._startTime = time + this._delayTime;
-                }
-                if (this._onRepeatCallback) {
-                    this._onRepeatCallback(this._object);
-                }
-                this._onEveryStartCallbackFired = false;
-                return true;
+        if (status === 'repeat' || status === 'about-to-repeat') {
+            if (this._onRepeatCallback) {
+                this._onRepeatCallback(this._object);
             }
-            else {
-                if (this._onCompleteCallback) {
-                    this._onCompleteCallback(this._object);
-                }
-                for (var i = 0, numChainedTweens = this._chainedTweens.length; i < numChainedTweens; i++) {
-                    // Make the chained tweens start exactly at the time they should,
-                    // even if the `update()` method was called way past the duration of the tween
-                    this._chainedTweens[i].start(this._startTime + this._duration, false);
-                }
-                this._isPlaying = false;
-                return false;
+            this._onEveryStartCallbackFired = false;
+        }
+        else if (status === 'completed') {
+            this._isPlaying = false;
+            if (this._onCompleteCallback) {
+                this._onCompleteCallback(this._object);
+            }
+            for (var i = 0, numChainedTweens = this._chainedTweens.length; i < numChainedTweens; i++) {
+                // Make the chained tweens start exactly at the time they should,
+                // even if the `update()` method was called way past the duration of the tween
+                this._chainedTweens[i].start(this._startTime + this._duration, false);
             }
         }
-        return true;
+        return status !== 'completed';
+    };
+    Tween.prototype._calculateElapsedPortion = function (elapsedTime, durationAndDelay, totalTime) {
+        if (this._duration === 0 || elapsedTime > totalTime) {
+            return 1;
+        }
+        var timeIntoCurrentRepeat = elapsedTime % durationAndDelay;
+        var portion = Math.min(timeIntoCurrentRepeat / this._duration, 1);
+        if (portion === 0 && elapsedTime !== 0 && elapsedTime % this._duration === 0) {
+            return 1;
+        }
+        return portion;
+    };
+    Tween.prototype._calculateCompletionStatus = function (elapsedTime, durationAndDelay) {
+        if (this._duration !== 0 && elapsedTime < this._duration) {
+            return 'playing';
+        }
+        if (this._repeat <= 0) {
+            return 'completed';
+        }
+        if (elapsedTime === this._duration) {
+            return 'about-to-repeat';
+        }
+        return 'repeat';
+    };
+    Tween.prototype._processRepetition = function (elapsedTime, durationAndDelay) {
+        var completeCount = Math.min(Math.trunc((elapsedTime - this._duration) / durationAndDelay) + 1, this._repeat);
+        if (isFinite(this._repeat)) {
+            this._repeat -= completeCount;
+        }
+        // Reassign starting values, restart by making startTime = now
+        for (var property in this._valuesStartRepeat) {
+            var valueEnd = this._valuesEnd[property];
+            if (!this._yoyo && typeof valueEnd === 'string') {
+                this._valuesStartRepeat[property] = this._valuesStartRepeat[property] + parseFloat(valueEnd);
+            }
+            if (this._yoyo) {
+                this._swapEndStartRepeatValues(property);
+            }
+            this._valuesStart[property] = this._valuesStartRepeat[property];
+        }
+        if (this._yoyo) {
+            this._reversed = !this._reversed;
+        }
+        this._startTime += durationAndDelay * completeCount;
     };
     Tween.prototype._updateProperties = function (_object, _valuesStart, _valuesEnd, value) {
         for (var property in _valuesEnd) {
@@ -812,7 +841,7 @@ var Tween = /** @class */ (function () {
     return Tween;
 }());
 
-var VERSION = '21.0.0';
+var VERSION = '23.1.2';
 
 /**
  * Tween.js - Licensed under the MIT license

@@ -1,7 +1,7 @@
 import {
 	GPUTextureAspect, GPUTextureViewDimension, GPUBufferBindingType, GPUTextureSampleType
 } from './WebGPUConstants.js';
-import { FloatType } from 'three';
+import { FloatType, IntType, UnsignedIntType } from 'three';
 
 class WebGPUBindingUtils {
 
@@ -62,8 +62,9 @@ class WebGPUBindingUtils {
 			} else if ( binding.isSampledTexture && binding.store ) {
 
 				const format = this.backend.get( binding.texture ).texture.format;
+				const access = binding.access;
 
-				bindingGPU.storageTexture = { format }; // GPUStorageTextureBindingLayout
+				bindingGPU.storageTexture = { format, access }; // GPUStorageTextureBindingLayout
 
 			} else if ( binding.isSampledTexture ) {
 
@@ -73,11 +74,25 @@ class WebGPUBindingUtils {
 
 					texture.sampleType = GPUTextureSampleType.Depth;
 
-				} else if ( binding.texture.isDataTexture && binding.texture.type === FloatType ) {
+				} else if ( binding.texture.isDataTexture ) {
 
-					// @TODO: Add support for this soon: backend.hasFeature( 'float32-filterable' )
+					const type = binding.texture.type;
 
-					texture.sampleType = GPUTextureSampleType.UnfilterableFloat;
+					if ( type === IntType ) {
+
+						texture.sampleType = GPUTextureSampleType.SInt;
+
+					} else if ( type === UnsignedIntType ) {
+
+						texture.sampleType = GPUTextureSampleType.UInt;
+
+					} else if ( type === FloatType ) {
+
+						// @TODO: Add support for this soon: backend.hasFeature( 'float32-filterable' )
+
+						texture.sampleType = GPUTextureSampleType.UnfilterableFloat;
+
+					}
 
 				}
 
@@ -85,13 +100,21 @@ class WebGPUBindingUtils {
 
 					texture.viewDimension = GPUTextureViewDimension.Cube;
 
+				} else if ( binding.texture.isDataArrayTexture ) {
+
+					texture.viewDimension = GPUTextureViewDimension.TwoDArray;
+
+				} else if ( binding.isSampledTexture3D ) {
+
+					texture.viewDimension = GPUTextureViewDimension.ThreeD;
+
 				}
 
 				bindingGPU.texture = texture;
 
 			} else {
 
-				console.error( 'WebGPUBindingUtils: Unsupported binding "${ binding }".' );
+				console.error( `WebGPUBindingUtils: Unsupported binding "${ binding }".` );
 
 			}
 
@@ -152,7 +175,7 @@ class WebGPUBindingUtils {
 					const usage = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
 
 					const bufferGPU = device.createBuffer( {
-						label: 'bindingBuffer',
+						label: 'bindingBuffer_' + binding.name,
 						size: byteLength,
 						usage: usage
 					} );
@@ -196,6 +219,14 @@ class WebGPUBindingUtils {
 
 					dimensionViewGPU = GPUTextureViewDimension.Cube;
 
+				} else if ( binding.isSampledTexture3D ) {
+
+					dimensionViewGPU = GPUTextureViewDimension.ThreeD;
+
+				} else if ( binding.texture.isDataArrayTexture ) {
+
+					dimensionViewGPU = GPUTextureViewDimension.TwoDArray;
+
 				} else {
 
 					dimensionViewGPU = GPUTextureViewDimension.TwoD;
@@ -212,7 +243,7 @@ class WebGPUBindingUtils {
 
 					const aspectGPU = GPUTextureAspect.All;
 
-					resourceGPU = textureData.texture.createView( { aspect: aspectGPU, dimension: dimensionViewGPU } );
+					resourceGPU = textureData.texture.createView( { aspect: aspectGPU, dimension: dimensionViewGPU, mipLevelCount: binding.store ? 1 : textureData.mipLevelCount } );
 
 				}
 
